@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>My Bingo</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="/to/socket.io/socket.io.js"></script>
+    <link rel="stylesheet" href="./css/main.css">
+    <link rel="stylesheet" href="./css/modal.css">
+    <link rel="stylesheet" href="./css/eye-animation.css">
+</head>
+<body>
+
+<!-- CONNECTION OVERLAY -->
+<div id="connectOverlay">
+    <div class="connect-logo">🎰 MY BINGO</div>
+    <div class="connect-sub">Connecting to server...</div>
+    <div class="connect-spinner"></div>
+</div>
+
+<!-- SCREEN 1: CARD CHOOSER -->
+<div class="screen active" id="cardChooserScreen">
+    <div class="header-bar">
+        <div class="header-item profile-section">
+            <button class="burger-btn" onclick="openDashboard()" aria-label="Menu" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;">
+                <span style="font-size:clamp(16px,2.5vh,22px);color:#D4A852;font-weight:900;line-height:1;">←</span>
+                <span style="font-size:clamp(8px,1.1vh,10px);color:#D4A852;font-weight:700;letter-spacing:1px;line-height:1;">HOME</span>
+            </button>
+            <div class="profile-pic" id="profilePic">JB</div>
+            <div>
+                <div class="profile-name" id="profileName">Player</div>
+                <span class="xp-badge" id="profileLevel">Beginner</span>
+            </div>
+        </div>
+        <div class="header-item">
+            <div>
+                <div class="header-label">Time</div>
+                <div class="header-value" id="headerCountdown" style="font-size:clamp(22px,4vh,36px);font-weight:900;color:#D4A852;line-height:1;">30</div>
+            </div>
+        </div>
+        <div class="header-item">
+            <div>
+                <div class="header-label">Wallet</div>
+                <div class="header-value" id="walletBalance"> ETB</div>
+            </div>
+        </div>
+        <div class="header-item">
+            <div>
+                <div class="header-label">Players</div>
+                <div class="header-value" id="playersCount">0</div>
+            </div>
+        </div>
+        <div class="header-item">
+            <div>
+                <div class="header-label">Stake</div>
+                <div class="header-value">30 ETB</div>
+            </div>
+        </div>
+    </div>
+    <div class="countdown-bar"><div class="countdown-bar-fill" id="countdownBarFill"></div></div>
+
+    <div class="chooser-top-preview" id="chooserTopPreview">
+        <div class="ctp-mini-card" id="ctpMiniCard">
+            <div class="ctp-mini-letters">
+                <div class="ctp-mini-letter">B</div>
+                <div class="ctp-mini-letter">I</div>
+                <div class="ctp-mini-letter">N</div>
+                <div class="ctp-mini-letter">G</div>
+                <div class="ctp-mini-letter">O</div>
+            </div>
+            <div class="ctp-mini-grid" id="ctpMiniGrid"></div>
+        </div>
+        <div class="ctp-info">
+            <div class="ctp-card-label" id="ctpCardLabel">Card #—</div>
+            <div class="ctp-card-sub" id="ctpCardSub">✓ Selected</div>
+        </div>
+        <button class="ctp-add2-btn" id="ctpAdd2Btn" onclick="ctpHandleAdd2()">＋ Add Card 2<br><span style="font-size:0.85em;opacity:0.85">+10 ETB</span></button>
+    </div>
+
+    <div class="chooser-content">
+        <div class="cards-section" id="cardsSection">
+            <div id="chooserTopBar" style="overflow:hidden;width:100%;margin-bottom:1vh;">
+                <div id="chooserTopBarInner" style="display:flex;align-items:center;gap:3vw;background:linear-gradient(135deg,rgba(212,168,82,0.10),rgba(232,131,74,0.06));border:1px solid rgba(212,168,82,0.25);border-radius:12px;padding:1.2vh 3vw;white-space:nowrap;animation:slideInFromRight 0.45s cubic-bezier(0.22,0.61,0.36,1) both;">
+                    <div style="width:8px;height:8px;border-radius:50%;background:#50C878;animation:pulse 1.5s infinite;flex-shrink:0;"></div>
+                    <div id="chooserBarTitle" style="font-size:clamp(13px,1.9vh,16px);font-weight:800;color:#D4A852;flex-shrink:0;">Classic Bingo · 10 ETB</div>
+                    <div id="chooserBarPhase" style="font-size:clamp(11px,1.6vh,14px);color:#C4A882;font-weight:600;flex-shrink:0;">⏳ Waiting to start…</div>
+                    <div style="display:flex;gap:4vw;margin-left:auto;flex-shrink:0;">
+                        <div style="text-align:center;">
+                            <div style="font-size:clamp(8px,1.1vh,10px);color:#C4A882;text-transform:uppercase;letter-spacing:0.5px;">Players</div>
+                            <div style="font-size:clamp(12px,1.8vh,15px);font-weight:800;color:#50C878;" id="lobbyStripPlayers">—</div>
+                        </div>
+                        <div style="text-align:center;">
+                            <div style="font-size:clamp(8px,1.1vh,10px);color:#C4A882;text-transform:uppercase;letter-spacing:0.5px;">Pot</div>
+                            <div style="font-size:clamp(12px,1.8vh,15px);font-weight:800;color:#E8834A;" id="lobbyStripPot">—</div>
+                        </div>
+                        <div style="text-align:center;">
+                            <div style="font-size:clamp(8px,1.1vh,10px);color:#C4A882;text-transform:uppercase;letter-spacing:0.5px;">Phase</div>
+                            <div style="font-size:clamp(12px,1.8vh,15px);font-weight:800;color:#4169E1;" id="lobbyStripPhase">—</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="cards-grid" id="cardsGrid"></div>
+        </div>
+
+        <div class="preview-section" id="previewSection">
+            <div class="preview-section-header">
+                <div class="preview-section-title" id="previewSectionTitle">Card #1</div>
+                <div id="lockStatus" style="font-size:clamp(12px,1.8vh,16px);color:#50C878;font-weight:600;">✓ Selected — can switch</div>
+            </div>
+            <div class="preview-section-body">
+                <div class="inline-preview-card" id="inlinePreviewCard">
+                    <div class="inline-preview-letters">
+                        <div class="inline-preview-letter">B</div>
+                        <div class="inline-preview-letter">I</div>
+                        <div class="inline-preview-letter">N</div>
+                        <div class="inline-preview-letter">G</div>
+                        <div class="inline-preview-letter">O</div>
+                    </div>
+                    <div class="inline-preview-grid" id="inlinePreviewGrid"></div>
+                </div>
+                <div class="preview-info">
+                    <div class="preview-card-id" id="previewCardId">Card #1</div>
+                    <div class="preview-card-status" id="previewCardStatus">✓ Selected</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- SCREEN 2: LIVE GAME -->
+<div class="screen" id="gameScreen">
+    <div class="header-bar" style="grid-template-columns:2fr 1fr 1fr 1fr 1fr;">
+        <div class="header-item profile-section">
+            <button class="burger-btn" onclick="openDashboard()" aria-label="Menu" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;">
+                <span style="font-size:clamp(16px,2.5vh,22px);color:#D4A852;font-weight:900;line-height:1;">←</span>
+                <span style="font-size:clamp(8px,1.1vh,10px);color:#D4A852;font-weight:700;letter-spacing:1px;line-height:1;">HOME</span>
+            </button>
+            <div class="profile-pic" id="gameProfilePic">JB</div>
+            <div class="profile-name" id="gameProfileName">Player</div>
+        </div>
+        <div class="header-item">
+            <div>
+                <div class="header-label">Card</div>
+                <div class="header-value" id="gameCardId">#1</div>
+            </div>
+        </div>
+        <div class="header-item">
+            <div>
+                <div class="header-label">Players</div>
+                <div class="header-value" id="gamePlayers">0</div>
+            </div>
+        </div>
+        <div class="header-item">
+            <div>
+                <div class="header-label">Derash</div>
+                <div class="header-value" id="gameDerash">0</div>
+            </div>
+        </div>
+        <div class="header-item">
+            <div>
+                <div class="header-label">Calls</div>
+                <div class="header-value" id="gameCallsCount">0</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="main-content">
+        <div class="left-panel">
+            <div class="bingo-letters-left">
+                <button class="bingo-letter-left letter-b">B</button>
+                <button class="bingo-letter-left letter-i">I</button>
+                <button class="bingo-letter-left letter-n">N</button>
+                <button class="bingo-letter-left letter-g">G</button>
+                <button class="bingo-letter-left letter-o">O</button>
+            </div>
+            <div class="status-indicator">
+                <div class="status-text" id="gameStatus">GAME IN PROGRESS</div>
+            </div>
+            <div class="grid-wrapper">
+                <div class="all-numbers-grid" id="allNumbersGrid"></div>
+            </div>
+        </div>
+
+        <div class="right-panel">
+            <div class="card-grid-container">
+                <div class="card-with-header">
+                    <div class="swipe-bar-container">
+                        <div class="mini-eyes" id="miniEyes">
+                            <div class="mini-eye" id="miniEyeL">
+                                <div class="mini-sclera">
+                                    <div class="mini-iris-wrap" id="miniIrisL">
+                                        <div class="mini-iris">
+                                            <div class="mini-pupil"></div>
+                                            <div class="mini-hl"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="mini-lid-top"></div>
+                                <div class="mini-lid-bot"></div>
+                            </div>
+                            <div class="mini-eye" id="miniEyeR">
+                                <div class="mini-sclera">
+                                    <div class="mini-iris-wrap" id="miniIrisR">
+                                        <div class="mini-iris">
+                                            <div class="mini-pupil"></div>
+                                            <div class="mini-hl"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="mini-lid-top"></div>
+                                <div class="mini-lid-bot"></div>
+                            </div>
+                        </div>
+                        <div class="swipe-middle" id="swipeMiddle">
+                            <div class="number-slider" id="numberSlider"></div>
+                        </div>
+                        <div class="swipe-current-number" id="currentCallDisplay">--</div>
+                    </div>
+                    <div class="bingo-letters-right">
+                        <button class="bingo-letter-right letter-b">B</button>
+                        <button class="bingo-letter-right letter-i">I</button>
+                        <button class="bingo-letter-right letter-n">N</button>
+                        <button class="bingo-letter-right letter-g">G</button>
+                        <button class="bingo-letter-right letter-o">O</button>
+                    </div>
+                    <div class="dual-card-wrapper">
+                        <div class="card-slot active-slot" id="cardSlot1">
+                            <div class="card-slot-label">CARD 1</div>
+                            <div class="bingo-card-grid-sm" id="bingoCard"></div>
+                        </div>
+                        <div class="card-slot" id="cardSlot2">
+                            <div class="card-slot-label" id="card2Label">CARD 2</div>
+                            <div id="card2Empty" class="card-slot-empty" onclick="openCard2Chooser()">
+                                <div class="card-slot-empty-icon">＋</div>
+                                <div class="card-slot-empty-text">Tap to add<br>2nd card<br>(+10 ETB)</div>
+                            </div>
+                            <div id="card2Content" style="display:none;flex-direction:column;gap:0.4vh;">
+                                <div class="card2-letters">
+                                    <div class="card2-letter letter-b">B</div>
+                                    <div class="card2-letter letter-i">I</div>
+                                    <div class="card2-letter letter-n">N</div>
+                                    <div class="card2-letter letter-g">G</div>
+                                    <div class="card2-letter letter-o">O</div>
+                                </div>
+                                <div class="bingo-card-grid-sm" id="bingoCard2"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="bingo-btn-row">
+                    <button class="bingo-btn-single" onclick="callBingo(1)" id="bingoBtn1">BINGO!</button>
+                    <button class="bingo-btn-single card2-btn" onclick="callBingo(2)" id="bingoBtn2" disabled style="opacity:0.25">BINGO 2</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- CARD 2 CHOOSER MODAL -->
+<div id="card2ChooserOverlay" style="display:none;position:fixed;inset:0;z-index:99999;background:rgba(42,31,53,0.95);align-items:flex-end;justify-content:center;">
+    <div style="width:100%;max-width:480px;background:linear-gradient(135deg,#2E2440,#221830);border:2px solid rgba(212,168,82,0.4);border-radius:2vh 2vh 0 0;padding:2.5vh 4vw 4vh;max-height:70vh;overflow-y:auto;">
+        <div style="text-align:center;font-size:clamp(15px,2.5vh,20px);font-weight:800;color:#D4A852;margin-bottom:1vh;">Pick Your 2nd Card</div>
+        <div style="text-align:center;font-size:clamp(11px,1.6vh,14px);color:#E8834A;margin-bottom:2vh;">+10 ETB stake • doubles your chances</div>
+        <div id="card2Grid" style="display:grid;grid-template-columns:repeat(10,1fr);gap:0.8vh;margin-bottom:2vh;"></div>
+        <button onclick="closeCard2Chooser()" style="width:100%;padding:1.4vh;background:rgba(212,168,82,0.1);border:1px solid rgba(212,168,82,0.3);border-radius:50%;color:#E8834A;font-size:clamp(13px,1.8vh,16px);font-weight:700;cursor:pointer;">Cancel</button>
+    </div>
+</div>
+
+<!-- SCREEN 3: WINNER -->
+<div class="winner-screen" id="winnerScreen">
+    <div class="winner-slides" id="winnerSlides">
+        <div class="winner-slide">
+            <div class="winner-top-row">
+                <div class="winner-avatar" id="winnerAvatar">🏆</div>
+                <div class="winner-title-block">
+                    <div class="winner-title">🏆 BINGO!</div>
+                    <div class="winner-name" id="winnerName">Player</div>
+                    <div class="winner-prize" id="winnerPrize">+0 ETB</div>
+                    <div style="font-size:clamp(11px,1.6vh,14px);color:rgba(212,168,82,0.6);font-weight:600;margin-top:2px;" id="winnerCardNum">Card #—</div>
+                </div>
+            </div>
+            <div class="winner-pattern-label">Winning Pattern ↓</div>
+            <div class="winner-card-wrap">
+                <div class="winner-bingo-letters">
+                    <div class="winner-letter">B</div><div class="winner-letter">I</div>
+                    <div class="winner-letter">N</div><div class="winner-letter">G</div>
+                    <div class="winner-letter">O</div>
+                </div>
+                <div class="winner-card-grid" id="winnerCardGrid"></div>
+            </div>
+            <div class="winner-bottom-row">
+                <div class="slide-dots">
+                    <div class="slide-dot active" onclick="goToSlide(0)"></div>
+                    <div class="slide-dot" onclick="goToSlide(1)"></div>
+                </div>
+                <button class="see-card-btn" onclick="goToSlide(1)">👉 See My Card</button>
+            </div>
+        </div>
+
+        <div class="unfinished-slide">
+            <div class="winner-top-row">
+                <div class="winner-avatar" id="myAvatar">JB</div>
+                <div class="winner-title-block">
+                    <div class="unfinished-title">My Card</div>
+                    <div class="unfinished-subtitle" id="myCardNum">Card #—</div>
+                </div>
+            </div>
+            <div class="winner-pattern-label">Your marked numbers ↓</div>
+            <div class="winner-card-wrap">
+                <div class="winner-bingo-letters">
+                    <div class="winner-letter">B</div><div class="winner-letter">I</div>
+                    <div class="winner-letter">N</div><div class="winner-letter">G</div>
+                    <div class="winner-letter">O</div>
+                </div>
+                <div class="winner-card-grid" id="myUnfinishedCard"></div>
+            </div>
+            <div class="winner-bottom-row">
+                <div class="slide-dots">
+                    <div class="slide-dot" onclick="goToSlide(0)"></div>
+                    <div class="slide-dot active" onclick="goToSlide(1)"></div>
+                </div>
+                <button class="back-to-home-btn" onclick="returnToLobby()">🎰 Play Again!</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- DASHBOARD OVERLAY (LANDING PAGE) -->
+<div class="dashboard-overlay" id="dashboardOverlay">
+    <div class="dash-scroll" style="padding-top:3vh;">
+        <div style="background:linear-gradient(135deg,#3A2E50,#2A1F35);border-radius:2vh;padding:2vh 3vw;box-shadow:0 4px 20px rgba(212,168,82,0.15);">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.4vh;">
+                <div class="d-profile-name" id="dashProfileName" style="font-size:clamp(15px,2.3vh,20px);">Player</div>
+                <div style="text-align:right;">
+                    <div style="font-size:clamp(9px,1.2vh,11px);color:#C4A882;text-transform:uppercase;letter-spacing:0.5px;">Balance</div>
+                    <div class="d-balance-value" id="dashBalance" style="font-size:clamp(16px,2.6vh,22px);">0 ETB</div>
+                </div>
+            </div>
+            <span id="dashPendingAmount" style="display:none;">0 ETB</span>
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:1.5vw;margin-top:1.4vh;">
+                <button onclick="dashInvite()" id="btnInviteInline" style="background:rgba(212,168,82,0.1);border:1.5px solid rgba(212,168,82,0.35);border-radius:50px;padding:1.2vh 0;color:#D4A852;font-size:clamp(11px,1.6vh,13px);font-weight:700;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:0.3vh;">
+                    <span style="font-size:clamp(16px,2.5vh,20px);">💌</span>
+                    <span>Invite</span>
+                </button>
+                <button onclick="toggleInlinePanel('deposit')" id="btnDepositInline" style="background:rgba(80,200,120,0.1);border:1.5px solid rgba(80,200,120,0.35);border-radius:50px;padding:1.2vh 0;color:#50C878;font-size:clamp(11px,1.6vh,13px);font-weight:700;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:0.3vh;">
+                    <span style="font-size:clamp(16px,2.5vh,20px);">⬇️</span>
+                    <span>Deposit</span>
+                </button>
+                <button onclick="toggleInlinePanel('withdraw')" id="btnWithdrawInline" style="background:rgba(232,131,74,0.1);border:1.5px solid rgba(232,131,74,0.35);border-radius:50px;padding:1.2vh 0;color:#E8834A;font-size:clamp(11px,1.6vh,13px);font-weight:700;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:0.3vh;">
+                    <span style="font-size:clamp(16px,2.5vh,20px);">⬆️</span>
+                    <span>Withdraw</span>
+                </button>
+            </div>
+            <div id="inlinePanel" style="overflow:hidden;max-height:0;transition:max-height 0.38s cubic-bezier(0.4,0,0.2,1);"></div>
+        </div>
+
+        <div id="dashLobbyBox" style="background:linear-gradient(135deg,#3A2E50,#2A1F35);border:2px solid rgba(212,168,82,0.4);border-radius:2vh;overflow:hidden;box-shadow:0 4px 20px rgba(212,168,82,0.15);">
+            <div style="background:linear-gradient(135deg,rgba(212,168,82,0.12),rgba(232,131,74,0.06));padding:1.5vh 3vw;border-bottom:1px solid rgba(212,168,82,0.15);display:flex;align-items:center;justify-content:space-between;">
+                <div style="font-size:clamp(13px,2vh,17px);font-weight:800;color:#D4A852;letter-spacing:1px;">🎮 GAME ROOMS</div>
+                <div style="font-size:clamp(9px,1.3vh,11px);color:rgba(212,168,82,0.6);font-weight:700;letter-spacing:1.5px;">LIVE NOW</div>
+            </div>
+            <div id="dashRoom1" style="padding:2vh 3vw;border-bottom:1px solid rgba(212,168,82,0.1);cursor:pointer;transition:background 0.2s;" onclick="joinRoom('room1')" onmouseenter="this.style.background='rgba(212,168,82,0.05)'" onmouseleave="this.style.background='transparent'">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.2vh;">
+                    <div style="display:flex;align-items:center;gap:2.5vw;">
+                        <div style="width:clamp(40px,6.5vh,52px);height:clamp(40px,6.5vh,52px);border-radius:50%;background:linear-gradient(135deg,#D4A852,#E8834A);display:flex;align-items:center;justify-content:center;font-size:clamp(18px,3vh,24px);box-shadow:0 0 14px rgba(212,168,82,0.4);flex-shrink:0;">🎰</div>
+                        <div>
+                            <div style="font-size:clamp(13px,2vh,17px);font-weight:800;color:#D4A852;">Classic Bingo</div>
+                            <div style="font-size:clamp(10px,1.4vh,12px);color:#C4A882;">75 Numbers · Standard</div>
+                        </div>
+                    </div>
+                    <div style="text-align:right;">
+                        <div style="font-size:clamp(18px,3vh,24px);font-weight:900;color:#D4A852;line-height:1;" id="dr1Stake">10 ETB</div>
+                        <div style="font-size:clamp(9px,1.2vh,10px);color:rgba(212,168,82,0.5);font-weight:700;">stake</div>
+                    </div>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:1.5vw;margin-bottom:1.2vh;">
+                    <div style="text-align:center;background:rgba(212,168,82,0.07);border-radius:50%;padding:0.8vh 0;">
+                        <div style="font-size:clamp(8px,1.1vh,10px);color:#C4A882;text-transform:uppercase;letter-spacing:0.3px;">Players</div>
+                        <div style="font-size:clamp(12px,1.9vh,16px);font-weight:800;color:#50C878;" id="dr1Players">—</div>
+                    </div>
+                    <div style="text-align:center;background:rgba(212,168,82,0.07);border-radius:50%;padding:0.8vh 0;">
+                        <div style="font-size:clamp(8px,1.1vh,10px);color:#C4A882;text-transform:uppercase;letter-spacing:0.3px;">Status</div>
+                        <div style="font-size:clamp(12px,1.9vh,16px);font-weight:800;color:#4169E1;" id="dr1Phase">—</div>
+                    </div>
+                    <div style="text-align:center;background:rgba(212,168,82,0.07);border-radius:50%;padding:0.8vh 0;">
+                        <div style="font-size:clamp(8px,1.1vh,10px);color:#C4A882;text-transform:uppercase;letter-spacing:0.3px;">Derash</div>
+                        <div style="font-size:clamp(12px,1.9vh,16px);font-weight:800;color:#E8834A;" id="dr1Derash">—</div>
+                    </div>
+                    <div style="text-align:center;background:rgba(212,168,82,0.07);border-radius:50%;padding:0.8vh 0;">
+                        <div style="font-size:clamp(8px,1.1vh,10px);color:#C4A882;text-transform:uppercase;letter-spacing:0.3px;">Pot</div>
+                        <div style="font-size:clamp(12px,1.9vh,16px);font-weight:800;color:#D4A852;" id="dr1Pot">—</div>
+                    </div>
+                </div>
+                <div style="display:flex;align-items:center;justify-content:space-between;">
+                    <div style="display:flex;align-items:center;gap:1.5vw;">
+                        <div style="width:7px;height:7px;border-radius:50%;background:#50C878;animation:pulse 1.5s infinite;"></div>
+                        <div style="font-size:clamp(9px,1.3vh,11px);color:rgba(80,200,120,0.8);font-weight:700;">LIVE · 80% payout</div>
+                    </div>
+                    <div style="background:linear-gradient(135deg,#D4A852,#E8834A);border:none;border-radius:50px;padding:0.8vh 4vw;color:#2A1F35;font-size:clamp(12px,1.8vh,15px);font-weight:800;cursor:pointer;box-shadow:0 3px 10px rgba(212,168,82,0.4);">JOIN →</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="d-section" onclick="closeDashboard()" style="position:relative;overflow:hidden;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1.4vh;padding:5vh 3vw;min-height:22vh;cursor:pointer;background:linear-gradient(135deg,#E8834A 0%,#D4A852 55%,#E8994A 100%);box-shadow:0 6px 28px rgba(232,131,74,0.45);">
+            <div class="pb-nums-layer" aria-hidden="true">
+                <span style="--pbx:8%;--pby:15%;--pbr:-18deg;--pbd:0s;">B7</span>
+                <span style="--pbx:72%;--pby:10%;--pbr:12deg;--pbd:0.6s;">N34</span>
+                <span style="--pbx:88%;--pby:55%;--pbr:-8deg;--pbd:1.2s;">G52</span>
+                <span style="--pbx:5%;--pby:70%;--pbr:22deg;--pbd:1.8s;">O68</span>
+                <span style="--pbx:50%;--pby:80%;--pbr:-14deg;--pbd:2.4s;">I19</span>
+                <span style="--pbx:30%;--pby:30%;--pbr:7deg;--pbd:3s;">B12</span>
+                <span style="--pbx:65%;--pby:65%;--pbr:-20deg;--pbd:0.3s;">N43</span>
+                <span style="--pbx:82%;--pby:25%;--pbr:16deg;--pbd:1.5s;">G47</span>
+                <span style="--pbx:18%;--pby:50%;--pbr:-5deg;--pbd:2.1s;">O75</span>
+                <span style="--pbx:42%;--pby:12%;--pbr:10deg;--pbd:2.7s;">I28</span>
+            </div>
+            <div style="font-size:clamp(24px,4.2vh,34px);font-weight:900;color:#2A1F35;letter-spacing:3px;text-shadow:0 2px 8px rgba(255,255,255,0.25);position:relative;z-index:1;">🎰 PLAY BINGO</div>
+            <div style="font-size:clamp(12px,1.8vh,15px);color:rgba(42,31,53,0.75);font-weight:700;position:relative;z-index:1;">Tap to enter the game room</div>
+            <div style="width:60%;height:3px;background:linear-gradient(90deg,transparent,rgba(42,31,53,0.4),transparent);border-radius:2px;animation:shimmer-bar 2s ease-in-out infinite;position:relative;z-index:1;"></div>
+        </div>
+
+        <div class="d-section">
+            <div class="d-section-title">🏆 Referral Leaderboard</div>
+            <div style="text-align:center;font-size:clamp(11px,1.6vh,14px);color:#E8834A;font-weight:700;padding:0.8vh 0 1.2vh;opacity:0.85;">🚀 We will start prize soon</div>
+            <div class="d-lb-controls">
+                <div class="d-time-filters" style="width:100%;">
+                    <div class="d-time-filter active" onclick="dashFilterTime(this,'3d')">3 Days</div>
+                    <div class="d-time-filter" onclick="dashFilterTime(this,'10d')">10 Days</div>
+                </div>
+            </div>
+            <div class="d-lb-list" id="dashLbList"></div>
+            <div class="d-lb-item my-rank">
+                <div class="d-rank-badge"><div class="d-rank-num" id="dashMyRank">—</div></div>
+                <div class="d-leader-info" style="flex:1;">
+                    <div class="d-leader-name" id="dashMyName">You</div>
+                </div>
+                <div class="d-leader-score" id="dashMyScore">0 dep.</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- PENDING DRAWER -->
+<div class="pending-drawer" id="pendingDrawer" onclick="closePendingDrawer(event)">
+    <div class="pending-drawer-box">
+        <div class="pending-drawer-title">Pending Rewards</div>
+        <div id="pendingList"></div>
+        <div class="pending-drawer-close" onclick="closePendingDrawer()">Close</div>
+    </div>
+</div>
+
+<!-- GIFT POPUP -->
+<div class="d-gift-popup" id="dashGiftPopup">
+    <div class="d-gift-popup-content">
+        <div class="d-gift-popup-icon" id="dashGiftPopupIcon">🎁</div>
+        <div class="d-gift-popup-title" id="dashGiftPopupTitle"></div>
+        <div class="d-gift-popup-rewards" id="dashGiftPopupRewards"></div>
+        <div class="d-gift-popup-msg" id="dashGiftPopupMsg"></div>
+        <div class="d-gift-popup-btns" id="dashGiftPopupBtns"></div>
+    </div>
+</div>
+
+<!-- GIFT OVERLAY -->
+<div id="giftOverlay5" onclick="closeGift5()">
+  <div id="giftBox5" onclick="event.stopPropagation()">
+    <div class="gift5-icon-big">🎁</div>
+    <div class="gift5-title">Daily Gift</div>
+    <div class="gift5-subtitle">Your rewards are ready</div>
+    <div class="gift5-rewards">
+      <div class="gift5-reward"><div class="gift5-reward-amt etb">+1 ETB</div><div class="gift5-reward-label">Balance</div></div>
+      <div style="width:1px;background:rgba(255,255,255,0.06);align-self:stretch;margin:4px 0;"></div>
+      <div class="gift5-reward"><div class="gift5-reward-amt xp">+10 XP</div><div class="gift5-reward-label">Experience</div></div>
+    </div>
+    <div class="gift5-claim-row">
+      <button class="gift5-claim-btn etb" id="claimEtbBtn5" onclick="claimGift5('etb')">Claim ETB</button>
+      <button class="gift5-claim-btn xp"  id="claimXpBtn5"  onclick="claimGift5('xp')">Claim XP</button>
+    </div>
+    <div class="gift5-close" onclick="closeGift5()">✕ Close</div>
+  </div>
+</div>
+
+<!-- ISLAND MODAL -->
+<div id="islandOverlay5" onclick="closeIsland5()">
+  <div id="islandBox5" onclick="event.stopPropagation()">
+    <div class="island5-modal-icon">🔒</div>
+    <div class="island5-modal-title">Island Access</div>
+    <div class="island5-modal-sub">You don't have Island Access.<br><span>Come back soon.</span></div>
+    <button class="island5-modal-close" onclick="closeIsland5()">Got it</button>
+  </div>
+</div>
+
+<!-- LEADERBOARD MODAL -->
+<div id="leaderboardModal" class="leaderboard-modal" style="display: none;">
+    <div class="leaderboard-modal-content">
+        <div class="leaderboard-modal-header">
+            <div class="leaderboard-header-emoji">🎲</div>
+            <div class="leaderboard-header-title">Birr Keno</div>
+            <div class="leaderboard-header-sub">ቢር ኬኖ</div>
+            <button class="leaderboard-modal-close" onclick="closeLeaderboardModal()">✕</button>
+        </div>
+        <div style="text-align: center; padding: 20px 16px;">
+            <div style="font-size: 48px; margin-bottom: 12px;">🎯</div>
+            <div style="font-size: 24px; font-weight: 800; color: #D4A852; margin-bottom: 8px;">NEW! Birr Keno</div>
+            <div style="font-size: 18px; color: #00C853; margin-bottom: 16px;">አዲስ! ቢር ኬኖ</div>
+            <div style="background: #2A1F35; border-radius: 16px; padding: 16px; margin: 16px 0;">
+                <div style="color: #F0F0F0; font-size: 14px; margin-bottom: 8px;">💰 Same Wallet / አንድ ኪስ</div>
+                <div style="color: #D4A852; font-size: 20px; font-weight: 700;">✓ Play Both Games</div>
+                <div style="color: #C4A882; font-size: 12px;">በሁለቱም ተጫወት</div>
+            </div>
+            <div style="color: #C4A882; font-size: 13px; margin: 12px 0;">Different game. Same balance. Double the fun.</div>
+            <div style="color: #C4A882; font-size: 12px; margin-bottom: 20px;">የተለየ ጨዋታ። አንድ ኪስ። እጥፍ ደስታ።</div>
+        </div>
+        <div class="leaderboard-modal-footer" style="display: flex; gap: 12px; padding: 16px 20px;">
+            <button class="leaderboard-btn-close" onclick="closeLeaderboardModal()" style="flex: 1;">✕ Stay / ቆይ</button>
+            <button class="leaderboard-btn-play" onclick="playKeno()" style="flex: 1;">🎲 Play Keno / ተጫወት</button>
+        </div>
+    </div>
+</div>
+
+<script type="module" src="./js/app.js"></script>
+</body>
+</html>
