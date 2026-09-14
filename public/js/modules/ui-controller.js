@@ -74,6 +74,69 @@ function renderPendingList(rows) {
     });
 }
 
+/* ── Bingo Card Grid Renderer (shared 5x5 builder) ──
+   This is the single source of truth for turning a `card` object
+   ({b:[],i:[],n:[],g:[],o:[]}) into the 25 cells shown under the
+   B-I-N-G-O headers. Every place that used to hand-roll its own
+   row/col loop (the player's card, the card-2 slot, the selection
+   preview, the winner card, etc.) should call this instead so a
+   card either renders everywhere or nowhere — never "sometimes". */
+export function getCellNumber(card, row, col) {
+    if (row === 2 && col === 2) return null;
+    if (!card) return '';
+    if (col === 0) return card.b[row];
+    if (col === 1) return card.i[row];
+    if (col === 2) return row < 2 ? card.n[row] : card.n[row - 1];
+    if (col === 3) return card.g[row];
+    return card.o[row];
+}
+
+export function renderBingoCard(containerId, card, opts = {}) {
+    const grid = document.getElementById(containerId);
+    if (!grid) return;
+    if (!card) { grid.innerHTML = ''; return; }
+
+    const {
+        cellClass     = 'card-cell',
+        freeLabel     = 'FREE',
+        markFreeCell  = true,   // some preview grids style FREE via .free alone, not .marked
+        markedIndexes = [12],
+        clickable     = false,
+        onCellClick   = null,
+        calledNumbers = null,   // if provided, clicks are ignored unless the number was called
+    } = opts;
+
+    grid.innerHTML = '';
+    for (let row = 0; row < 5; row++) {
+        for (let col = 0; col < 5; col++) {
+            const index = row * 5 + col;
+            const cell = document.createElement('div');
+            cell.className = cellClass;
+
+            if (row === 2 && col === 2) {
+                cell.textContent = freeLabel;
+                cell.classList.add('free');
+                if (markFreeCell) cell.classList.add('marked');
+            } else {
+                const num = getCellNumber(card, row, col);
+                cell.textContent    = num;
+                cell.dataset.number = num;
+                cell.dataset.index  = index;
+                if (markedIndexes.includes(index)) cell.classList.add('marked');
+
+                if (clickable) {
+                    cell.addEventListener('click', function () {
+                        if (calledNumbers && !calledNumbers.includes(parseInt(this.dataset.number, 10))) return;
+                        this.classList.toggle('marked');
+                        if (typeof onCellClick === 'function') onCellClick(index, this.classList.contains('marked'));
+                    });
+                }
+            }
+            grid.appendChild(cell);
+        }
+    }
+}
+
 /* ── Bottom sheet drag ── */
 export function attachBsheetDrag(overlay) {
     const box    = overlay.querySelector('.bsheet-box');
@@ -189,7 +252,16 @@ export function submitDeposit() {
     });
 }
 
-/* ── Withdraw ── */
+/* ── Withdraw ──
+   NOTE: closeDepositModal() (above) had no counterpart for the withdraw
+   sheet — that's why its close/X button did nothing. Added to match. */
+export function closeWithdrawModal() {
+    const modal = document.getElementById('withdrawModal');
+    if (!modal) return;
+    modal.classList.remove('open');
+    setTimeout(() => modal.remove(), 320);
+}
+
 export function submitWithdraw() {
     const btn       = document.getElementById('wmConfirmBtn');
     const resultMsg = document.getElementById('wmResultMsg');
@@ -230,10 +302,7 @@ export function submitWithdraw() {
         if (typeof window.setWallet === 'function') window.setWallet(newBal);
         if (resultMsg) { resultMsg.className = 'success'; resultMsg.textContent = '💸 ' + amount + ' ETB is on the way!'; resultMsg.style.display = 'block'; }
         if (btn) btn.textContent = 'Done ✓';
-        setTimeout(() => {
-            const m = document.getElementById('withdrawModal');
-            if (m) { m.classList.remove('open'); setTimeout(() => m.remove(), 320); }
-        }, 2500);
+        setTimeout(closeWithdrawModal, 2500);
     })
     .catch(() => {
         if (resultMsg) { resultMsg.className = 'error'; resultMsg.textContent = '❌ Network error, try again'; resultMsg.style.display = 'block'; }
@@ -284,6 +353,10 @@ export function openLeaderboardModal() {
 export function closeLeaderboardModal() {
     const modal = document.getElementById('leaderboardModal');
     if (modal) modal.style.display = 'none';
+    // Bug: this never stopped the countdown interval started by openLeaderboardModal,
+    // so it kept ticking in the background after close (and could re-trigger DOM
+    // writes on a hidden modal). Clear it here.
+    if (lbCountdownInterval) { clearInterval(lbCountdownInterval); lbCountdownInterval = null; }
 }
 
 let lbCountdownInterval = null;
@@ -333,6 +406,33 @@ export function initTheme() {
             if (b) b.textContent = '☀️';
         }
     } catch(e) {}
+}
+
+/* ── Generic sheet/modal close delegation ──
+   Safety net: any close/X/backdrop element marked with
+   data-close-modal="<overlayId>" (or sitting inside an overlay and
+   marked plain data-close-modal) will close that overlay, whether it
+   uses a `.open` class or inline display toggling. This means a close
+   button works the moment the attribute is added to it in the HTML,
+   even if no dedicated JS handler was wired up for that particular
+   sheet — which is what was silently breaking Deposit/Withdraw/
+   Leaderboard after the file split (some had handlers, some didn't,
+   and it wasn't obvious from the JS alone). Call once on startup. */
+export function initGlobalSheetCloseHandlers() {
+    document.addEventListener('click', (e) => {
+        const trigger = e.target.closest('[data-close-modal]');
+        if (!trigger) return;
+        const targetId = trigger.getAttribute('data-close-modal');
+        const overlay = targetId
+            ? document.getElementById(targetId)
+            : trigger.closest('.modal-overlay, .bsheet-overlay, .sheet-overlay, [data-modal]');
+        if (!overlay) return;
+        if (overlay.classList.contains('open')) {
+            overlay.classList.remove('open');
+        } else {
+            overlay.style.display = 'none';
+        }
+    });
 }
 
 /* ── Copy helpers ── */
