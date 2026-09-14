@@ -15,7 +15,9 @@ import {
     closePendingDrawer,
     loadPendingRewards,
     attachBsheetDrag,
+    closeDepositModal,
     submitDeposit,
+    closeWithdrawModal,
     submitWithdraw,
     closeGift5,
     claimGift5,
@@ -28,6 +30,9 @@ import {
     dmPasteClipboard,
     dmSwitchTab,
     flashDone,
+    getCellNumber,
+    renderBingoCard,
+    initGlobalSheetCloseHandlers,
 } from './modules/ui-controller.js';
 
 /* ── Globals ── */
@@ -56,6 +61,7 @@ let autoScrollTimer = null;
 
 let countdownMax     = 30;
 let countdownCurrent = 30;
+let countdownTickerInterval = null;
 let frozenPlayerCount = null;
 
 let myCard2Index   = null;
@@ -113,14 +119,9 @@ function getLetterForNumber(n) {
     return 'O';
 }
 
-function getCellNumber(card, row, col) {
-    if (row === 2 && col === 2) return null;
-    if (col === 0) return card.b[row];
-    if (col === 1) return card.i[row];
-    if (col === 2) return row < 2 ? card.n[row] : card.n[row - 1];
-    if (col === 3) return card.g[row];
-    return card.o[row];
-}
+// getCellNumber now lives in ui-controller.js (imported above) so every
+// card-rendering call site — player card, card 2, previews, winner card —
+// shares one implementation instead of several hand-rolled copies.
 
 /* ── Expose API for other modules ── */
 window.getTelegramUser = getTelegramUser;
@@ -141,6 +142,8 @@ window.callBingo = callBingo;
 window.returnToLobby = returnToLobby;
 window.goToSlide = goToSlide;
 window.closePendingDrawer = closePendingDrawer;
+window.closeDepositModal = closeDepositModal;
+window.closeWithdrawModal = closeWithdrawModal;
 window.closeGift5 = closeGift5;
 window.claimGift5 = claimGift5;
 window.closeIsland5 = closeIsland5;
@@ -212,9 +215,17 @@ function connectToServer() {
         updateCountdownBar(countdown, countdown);
         renderCardsGrid();
         refreshLobbyStats();
+
+        if (phase === 'countdown' || phase === 'waiting') {
+            startCountdownTicker();
+        } else {
+            stopCountdownTicker();
+        }
     });
 
     socket.on('countdown_tick', ({ countdown }) => {
+        // Authoritative resync from the server; the local ticker keeps
+        // ticking every second in between these messages.
         countdownCurrent = countdown;
         document.getElementById('headerCountdown').textContent = countdown;
         updateCountdownBar(countdown, countdownMax);
@@ -258,6 +269,7 @@ function connectToServer() {
 
     socket.on('game_start', ({ playerCount, pot, derash }) => {
         gamePhase = 'playing';
+        stopCountdownTicker();
         frozenPlayerCount = playerCount;
         document.getElementById('gamePlayers').textContent  = playerCount;
         document.getElementById('playersCount').textContent = playerCount;
@@ -467,12 +479,41 @@ function applyGameState(state) {
         document.getElementById('gameScreen').classList.add('active');
         setWatchMode(true);
         generate75NumbersGrid();
+        stopCountdownTicker();
+    } else if (state.phase === 'countdown' || state.phase === 'waiting') {
+        startCountdownTicker();
     }
 }
 
 function renderUI() {
     updatePhaseBadge();
     renderCardsGrid();
+}
+
+/* Bug: the TIME display used to update only when a 'countdown_tick'
+   socket event arrived. If those events were ever delayed, dropped,
+   or spaced more than a second apart, the number on screen just sat
+   there. This local ticker decrements every second on its own so the
+   display always counts down smoothly; server 'countdown_tick'
+   messages still arrive and resync countdownCurrent to the
+   authoritative value, they just no longer are the only thing moving
+   the number. */
+function startCountdownTicker() {
+    stopCountdownTicker();
+    countdownTickerInterval = setInterval(() => {
+        if (countdownCurrent > 0) countdownCurrent--;
+        const cd = document.getElementById('headerCountdown');
+        if (cd) cd.textContent = countdownCurrent;
+        updateCountdownBar(countdownCurrent, countdownMax);
+        updatePhaseBadge();
+    }, 1000);
+}
+
+function stopCountdownTicker() {
+    if (countdownTickerInterval) {
+        clearInterval(countdownTickerInterval);
+        countdownTickerInterval = null;
+    }
 }
 
 function updateCountdownBar(current, max) {
@@ -619,45 +660,24 @@ function selectCard(index) {
 function showInlinePreview(index) {
     const card = allCards[index];
     if (!card) return;
-    const grid = document.getElementById('inlinePreviewGrid');
-    grid.innerHTML = '';
-    for (let row = 0; row < 5; row++) {
-        for (let col = 0; col < 5; col++) {
-            const cell = document.createElement('div');
-            cell.className = 'inline-preview-cell';
-            if (row === 2 && col === 2) {
-                cell.textContent = 'FREE';
-                cell.classList.add('free');
-            } else {
-                cell.textContent = getCellNumber(card, row, col);
-            }
-            grid.appendChild(cell);
-        }
-    }
+    renderBingoCard('inlinePreviewGrid', card, {
+        cellClass: 'inline-preview-cell',
+        markFreeCell: false,
+    });
 }
 
 function showChooserTopPreview(index) {
     const card = allCards[index];
     if (!card) return;
-    const bar  = document.getElementById('chooserTopPreview');
-    const miniGrid = document.getElementById('ctpMiniGrid');
+    const bar   = document.getElementById('chooserTopPreview');
     const label = document.getElementById('ctpCardLabel');
     const sub   = document.getElementById('ctpCardSub');
 
-    miniGrid.innerHTML = '';
-    for (let row = 0; row < 5; row++) {
-        for (let col = 0; col < 5; col++) {
-            const cell = document.createElement('div');
-            cell.className = 'ctp-mini-cell';
-            if (row === 2 && col === 2) {
-                cell.textContent = '★';
-                cell.classList.add('free');
-            } else {
-                cell.textContent = getCellNumber(card, row, col);
-            }
-            miniGrid.appendChild(cell);
-        }
-    }
+    renderBingoCard('ctpMiniGrid', card, {
+        cellClass: 'ctp-mini-cell',
+        freeLabel: '★',
+        markFreeCell: false,
+    });
 
     label.textContent = `Card #${index + 1}`;
     sub.textContent   = '✓ Selected — can switch';
@@ -727,40 +747,20 @@ function generate75NumbersGrid() {
 }
 
 function generatePlayerCard() {
-    const grid = document.getElementById('bingoCard');
-    grid.innerHTML = '';
-    const card = playerCardData;
     markedCells = [12];
-
-    for (let row = 0; row < 5; row++) {
-        for (let col = 0; col < 5; col++) {
-            const cell  = document.createElement('div');
-            const index = row * 5 + col;
-            cell.className = 'card-cell';
-
-            if (row === 2 && col === 2) {
-                cell.textContent = 'FREE';
-                cell.classList.add('free', 'marked');
+    renderBingoCard('bingoCard', playerCardData, {
+        cellClass: 'card-cell',
+        clickable: true,
+        markedIndexes: markedCells,
+        onCellClick: (idx, isMarked) => {
+            if (isMarked) {
+                if (!markedCells.includes(idx)) markedCells.push(idx);
             } else {
-                const num = getCellNumber(card, row, col);
-                cell.textContent    = num;
-                cell.dataset.number = num;
-                cell.dataset.index  = index;
-
-                cell.addEventListener('click', function () {
-                    this.classList.toggle('marked');
-                    const idx = parseInt(this.dataset.index);
-                    if (this.classList.contains('marked')) {
-                        markedCells.push(idx);
-                    } else {
-                        markedCells = markedCells.filter(i => i !== idx);
-                    }
-                    socket.emit('mark_cell', { cellIndex: idx });
-                });
+                markedCells = markedCells.filter(i => i !== idx);
             }
-            grid.appendChild(cell);
-        }
-    }
+            socket.emit('mark_cell', { cellIndex: idx });
+        },
+    });
 }
 
 function updateSlidingNumbers(letter, number) {
@@ -866,39 +866,20 @@ function selectCard2(idx) {
 
 function renderCard2() {
     if (!playerCard2Data || myCard2Index === null) return;
-    const grid = document.getElementById('bingoCard2');
-    if (!grid) return;
-    grid.innerHTML = '';
-    const card = playerCard2Data;
-    for (let row = 0; row < 5; row++) {
-        for (let col = 0; col < 5; col++) {
-            const idx  = row * 5 + col;
-            const cell = document.createElement('div');
-            cell.className = 'card-cell';
-            if (row === 2 && col === 2) {
-                cell.textContent = 'FREE';
-                cell.classList.add('free', 'marked');
+    if (!document.getElementById('bingoCard2')) return;
+    renderBingoCard('bingoCard2', playerCard2Data, {
+        cellClass: 'card-cell',
+        clickable: true,
+        markedIndexes: markedCells2,
+        calledNumbers: calledNumbers,
+        onCellClick: (idx, isMarked) => {
+            if (isMarked) {
+                if (!markedCells2.includes(idx)) markedCells2.push(idx);
             } else {
-                const num = getCellNumber(card, row, col);
-                cell.textContent    = num;
-                cell.dataset.number = num;
-                cell.dataset.index  = idx;
-                if (markedCells2.includes(idx)) cell.classList.add('marked');
-                cell.addEventListener('click', function() {
-                    const n = parseInt(this.dataset.number);
-                    const i = parseInt(this.dataset.index);
-                    if (!calledNumbers.includes(n)) return;
-                    this.classList.toggle('marked');
-                    if (this.classList.contains('marked')) {
-                        if (!markedCells2.includes(i)) markedCells2.push(i);
-                    } else {
-                        markedCells2 = markedCells2.filter(x => x !== i);
-                    }
-                });
+                markedCells2 = markedCells2.filter(x => x !== idx);
             }
-            grid.appendChild(cell);
-        }
-    }
+        },
+    });
 }
 
 function autoMarkCard2(num) {
@@ -1041,6 +1022,11 @@ function goToSlide(index) {
    ═══════════════════════════════════════════════ */
 function resetLocalState(state) {
     gamePhase        = state.phase;
+    // Bug: countdownCurrent/countdownMax were never resynced here, so after a
+    // round reset the ticker kept counting from whatever stale value was left
+    // over from the previous round instead of the fresh one the server sent.
+    countdownCurrent = state.countdown;
+    countdownMax     = 30;
     takenCards       = state.takenCards || {};
     calledNumbers    = [];
     currentNumber    = null;
@@ -1087,6 +1073,12 @@ function resetLocalState(state) {
     updateCountdownBar(state.countdown, 30);
     updatePhaseBadge();
     renderCardsGrid();
+
+    if (state.phase === 'countdown' || state.phase === 'waiting') {
+        startCountdownTicker();
+    } else {
+        stopCountdownTicker();
+    }
 }
 
 function returnToLobby() {
@@ -1834,6 +1826,7 @@ function closeWelcomeModal() {
    ═══════════════════════════════════════════════ */
 window.addEventListener('load', () => {
     initTheme();
+    initGlobalSheetCloseHandlers();
     setupSwipeDetection();
 
     if (typeof io !== 'undefined') {
@@ -1873,17 +1866,7 @@ window.addEventListener('load', () => {
         document.getElementById('headerCountdown').textContent = 30;
         updateCountdownBar(30, 30);
         updatePhaseBadge();
-
-        setInterval(() => {
-            countdownCurrent--;
-            if (countdownCurrent < 0) {
-                countdownCurrent = 30;
-                countdownMax = 30;
-            }
-            const cd = document.getElementById('headerCountdown');
-            if (cd) cd.textContent = countdownCurrent;
-            updateCountdownBar(countdownCurrent, countdownMax);
-        }, 1000);
+        startCountdownTicker();
     }
 });
 
