@@ -17,8 +17,6 @@ import {
     attachBsheetDrag,
     submitDeposit,
     submitWithdraw,
-    closeDepositModal,
-    closeWithdrawModal,
     closeGift5,
     claimGift5,
     closeIsland5,
@@ -30,8 +28,6 @@ import {
     dmPasteClipboard,
     dmSwitchTab,
     flashDone,
-    getCellNumber,
-    renderBingoCardGrid,
 } from './modules/ui-controller.js';
 
 /* ── Globals ── */
@@ -61,7 +57,6 @@ let autoScrollTimer = null;
 let countdownMax     = 30;
 let countdownCurrent = 30;
 let frozenPlayerCount = null;
-let localCountdownTimer = null;
 
 let myCard2Index   = null;
 let playerCard2Data = null;
@@ -118,8 +113,14 @@ function getLetterForNumber(n) {
     return 'O';
 }
 
-/* getCellNumber now lives in ui-controller.js and is imported above,
-   so every card-grid renderer in this file reads cells the same way. */
+function getCellNumber(card, row, col) {
+    if (row === 2 && col === 2) return null;
+    if (col === 0) return card.b[row];
+    if (col === 1) return card.i[row];
+    if (col === 2) return row < 2 ? card.n[row] : card.n[row - 1];
+    if (col === 3) return card.g[row];
+    return card.o[row];
+}
 
 /* ── Expose API for other modules ── */
 window.getTelegramUser = getTelegramUser;
@@ -140,8 +141,6 @@ window.callBingo = callBingo;
 window.returnToLobby = returnToLobby;
 window.goToSlide = goToSlide;
 window.closePendingDrawer = closePendingDrawer;
-window.closeDepositModal = closeDepositModal;
-window.closeWithdrawModal = closeWithdrawModal;
 window.closeGift5 = closeGift5;
 window.claimGift5 = claimGift5;
 window.closeIsland5 = closeIsland5;
@@ -213,7 +212,6 @@ function connectToServer() {
         updateCountdownBar(countdown, countdown);
         renderCardsGrid();
         refreshLobbyStats();
-        syncCountdownTimerToPhase();
     });
 
     socket.on('countdown_tick', ({ countdown }) => {
@@ -260,7 +258,6 @@ function connectToServer() {
 
     socket.on('game_start', ({ playerCount, pot, derash }) => {
         gamePhase = 'playing';
-        syncCountdownTimerToPhase();
         frozenPlayerCount = playerCount;
         document.getElementById('gamePlayers').textContent  = playerCount;
         document.getElementById('playersCount').textContent = playerCount;
@@ -303,7 +300,6 @@ function connectToServer() {
     socket.on('bingo_winner', ({ winner, calledNumbers: cn }) => {
         calledNumbers = cn;
         gamePhase = 'finished';
-        syncCountdownTimerToPhase();
         showWinnerScreen(winner);
     });
 
@@ -331,7 +327,6 @@ function connectToServer() {
 
     socket.on('no_winner', () => {
         gamePhase = 'finished';
-        syncCountdownTimerToPhase();
         showToast('🎲 No winner this round!', '#4169E1');
         document.getElementById('gameStatus').textContent = '🎲 No Winner!';
         setTimeout(() => {
@@ -470,50 +465,24 @@ function applyGameState(state) {
     if (state.phase === 'playing') {
         document.getElementById('cardChooserScreen').classList.remove('active');
         document.getElementById('gameScreen').classList.add('active');
-        setWatchMode(true);
         generate75NumbersGrid();
+
+        const ownIndex = Object.keys(takenCards).find(i => takenCards[i] === mySocketId);
+        if (ownIndex !== undefined) {
+            myCardIndex = parseInt(ownIndex);
+            playerCardData = allCards[myCardIndex];
+            document.getElementById('gameCardId').textContent = `#${myCardIndex + 1}`;
+            setWatchMode(false);
+            generatePlayerCard();
+        } else {
+            setWatchMode(true);
+        }
     }
-    syncCountdownTimerToPhase();
 }
 
 function renderUI() {
     updatePhaseBadge();
     renderCardsGrid();
-}
-
-/* ── Local countdown ticker ──
-   Previously the header countdown only updated inside the
-   `countdown_tick` socket handler — i.e. it was 100% dependent on the
-   server pushing a tick every single second over the websocket. Any
-   gap, delay, or missed emit on the server side (or just normal network
-   jitter) left the number frozen on screen with nothing on the client
-   ticking it down in between. This runs its own 1-second interval that
-   decrements the displayed value locally, and every authoritative
-   `countdown_tick` / `phase_change` / game-state event still overwrites
-   `countdownCurrent` with the server's real value, so the two can never
-   drift apart — the timer just never goes visibly static again. */
-function startLocalCountdown() {
-    stopLocalCountdown();
-    localCountdownTimer = setInterval(() => {
-        if (gamePhase !== 'countdown') { stopLocalCountdown(); return; }
-        countdownCurrent = Math.max(0, countdownCurrent - 1);
-        const cd = document.getElementById('headerCountdown');
-        if (cd) cd.textContent = countdownCurrent;
-        updateCountdownBar(countdownCurrent, countdownMax);
-        updatePhaseBadge();
-    }, 1000);
-}
-
-function stopLocalCountdown() {
-    if (localCountdownTimer) {
-        clearInterval(localCountdownTimer);
-        localCountdownTimer = null;
-    }
-}
-
-function syncCountdownTimerToPhase() {
-    if (gamePhase === 'countdown') startLocalCountdown();
-    else stopLocalCountdown();
 }
 
 function updateCountdownBar(current, max) {
@@ -659,24 +628,46 @@ function selectCard(index) {
 
 function showInlinePreview(index) {
     const card = allCards[index];
-    if (!card) {
-        console.warn(`[app] showInlinePreview: no card data for index ${index} (allCards length: ${allCards.length}).`);
-        return;
+    if (!card) return;
+    const grid = document.getElementById('inlinePreviewGrid');
+    grid.innerHTML = '';
+    for (let row = 0; row < 5; row++) {
+        for (let col = 0; col < 5; col++) {
+            const cell = document.createElement('div');
+            cell.className = 'inline-preview-cell';
+            if (row === 2 && col === 2) {
+                cell.textContent = 'FREE';
+                cell.classList.add('free');
+            } else {
+                cell.textContent = getCellNumber(card, row, col);
+            }
+            grid.appendChild(cell);
+        }
     }
-    renderBingoCardGrid('inlinePreviewGrid', card, { cellClass: 'inline-preview-cell' });
 }
 
 function showChooserTopPreview(index) {
     const card = allCards[index];
-    if (!card) {
-        console.warn(`[app] showChooserTopPreview: no card data for index ${index} (allCards length: ${allCards.length}).`);
-        return;
-    }
-    const bar   = document.getElementById('chooserTopPreview');
+    if (!card) return;
+    const bar  = document.getElementById('chooserTopPreview');
+    const miniGrid = document.getElementById('ctpMiniGrid');
     const label = document.getElementById('ctpCardLabel');
     const sub   = document.getElementById('ctpCardSub');
 
-    renderBingoCardGrid('ctpMiniGrid', card, { cellClass: 'ctp-mini-cell', freeText: '★' });
+    miniGrid.innerHTML = '';
+    for (let row = 0; row < 5; row++) {
+        for (let col = 0; col < 5; col++) {
+            const cell = document.createElement('div');
+            cell.className = 'ctp-mini-cell';
+            if (row === 2 && col === 2) {
+                cell.textContent = '★';
+                cell.classList.add('free');
+            } else {
+                cell.textContent = getCellNumber(card, row, col);
+            }
+            miniGrid.appendChild(cell);
+        }
+    }
 
     label.textContent = `Card #${index + 1}`;
     sub.textContent   = '✓ Selected — can switch';
@@ -746,26 +737,40 @@ function generate75NumbersGrid() {
 }
 
 function generatePlayerCard() {
+    const grid = document.getElementById('bingoCard');
+    grid.innerHTML = '';
     const card = playerCardData;
-    if (!card) {
-        console.warn('[app] generatePlayerCard: playerCardData is not set — nothing to render.');
-        return;
-    }
     markedCells = [12];
 
-    renderBingoCardGrid('bingoCard', card, {
-        cellClass: 'card-cell',
-        markedCells,
-        onCellClick: (cell, idx) => {
-            cell.classList.toggle('marked');
-            if (cell.classList.contains('marked')) {
-                markedCells.push(idx);
+    for (let row = 0; row < 5; row++) {
+        for (let col = 0; col < 5; col++) {
+            const cell  = document.createElement('div');
+            const index = row * 5 + col;
+            cell.className = 'card-cell';
+
+            if (row === 2 && col === 2) {
+                cell.textContent = 'FREE';
+                cell.classList.add('free', 'marked');
             } else {
-                markedCells = markedCells.filter(i => i !== idx);
+                const num = getCellNumber(card, row, col);
+                cell.textContent    = num;
+                cell.dataset.number = num;
+                cell.dataset.index  = index;
+
+                cell.addEventListener('click', function () {
+                    this.classList.toggle('marked');
+                    const idx = parseInt(this.dataset.index);
+                    if (this.classList.contains('marked')) {
+                        markedCells.push(idx);
+                    } else {
+                        markedCells = markedCells.filter(i => i !== idx);
+                    }
+                    socket.emit('mark_cell', { cellIndex: idx });
+                });
             }
-            socket.emit('mark_cell', { cellIndex: idx });
-        },
-    });
+            grid.appendChild(cell);
+        }
+    }
 }
 
 function updateSlidingNumbers(letter, number) {
@@ -871,19 +876,39 @@ function selectCard2(idx) {
 
 function renderCard2() {
     if (!playerCard2Data || myCard2Index === null) return;
-    renderBingoCardGrid('bingoCard2', playerCard2Data, {
-        cellClass: 'card-cell',
-        markedCells: markedCells2,
-        onCellClick: (cell, idx, num) => {
-            if (!calledNumbers.includes(num)) return;
-            cell.classList.toggle('marked');
-            if (cell.classList.contains('marked')) {
-                if (!markedCells2.includes(idx)) markedCells2.push(idx);
+    const grid = document.getElementById('bingoCard2');
+    if (!grid) return;
+    grid.innerHTML = '';
+    const card = playerCard2Data;
+    for (let row = 0; row < 5; row++) {
+        for (let col = 0; col < 5; col++) {
+            const idx  = row * 5 + col;
+            const cell = document.createElement('div');
+            cell.className = 'card-cell';
+            if (row === 2 && col === 2) {
+                cell.textContent = 'FREE';
+                cell.classList.add('free', 'marked');
             } else {
-                markedCells2 = markedCells2.filter(x => x !== idx);
+                const num = getCellNumber(card, row, col);
+                cell.textContent    = num;
+                cell.dataset.number = num;
+                cell.dataset.index  = idx;
+                if (markedCells2.includes(idx)) cell.classList.add('marked');
+                cell.addEventListener('click', function() {
+                    const n = parseInt(this.dataset.number);
+                    const i = parseInt(this.dataset.index);
+                    if (!calledNumbers.includes(n)) return;
+                    this.classList.toggle('marked');
+                    if (this.classList.contains('marked')) {
+                        if (!markedCells2.includes(i)) markedCells2.push(i);
+                    } else {
+                        markedCells2 = markedCells2.filter(x => x !== i);
+                    }
+                });
             }
-        },
-    });
+            grid.appendChild(cell);
+        }
+    }
 }
 
 function autoMarkCard2(num) {
@@ -936,7 +961,13 @@ function refreshLobbyStats() {
 
 function joinRoom(roomId) {
     closeDashboard();
+    // TODO: actually route to the selected room/game screen here
 }
+
+window.resetDashGiftTimer = function(hours) {
+    dashGiftSecs = hours * 3600;
+    dashStartGiftCountdown();
+};
 
 let lobbyStatsTimer = null;
 
@@ -1026,9 +1057,6 @@ function goToSlide(index) {
    ═══════════════════════════════════════════════ */
 function resetLocalState(state) {
     gamePhase        = state.phase;
-    countdownCurrent = state.countdown;
-    countdownMax     = 30;
-    syncCountdownTimerToPhase();
     takenCards       = state.takenCards || {};
     calledNumbers    = [];
     currentNumber    = null;
