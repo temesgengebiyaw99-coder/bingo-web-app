@@ -74,69 +74,6 @@ function renderPendingList(rows) {
     });
 }
 
-/* ── Bingo Card Grid Renderer (shared 5x5 builder) ──
-   This is the single source of truth for turning a `card` object
-   ({b:[],i:[],n:[],g:[],o:[]}) into the 25 cells shown under the
-   B-I-N-G-O headers. Every place that used to hand-roll its own
-   row/col loop (the player's card, the card-2 slot, the selection
-   preview, the winner card, etc.) should call this instead so a
-   card either renders everywhere or nowhere — never "sometimes". */
-export function getCellNumber(card, row, col) {
-    if (row === 2 && col === 2) return null;
-    if (!card) return '';
-    if (col === 0) return card.b[row];
-    if (col === 1) return card.i[row];
-    if (col === 2) return row < 2 ? card.n[row] : card.n[row - 1];
-    if (col === 3) return card.g[row];
-    return card.o[row];
-}
-
-export function renderBingoCard(containerId, card, opts = {}) {
-    const grid = document.getElementById(containerId);
-    if (!grid) return;
-    if (!card) { grid.innerHTML = ''; return; }
-
-    const {
-        cellClass     = 'card-cell',
-        freeLabel     = 'FREE',
-        markFreeCell  = true,   // some preview grids style FREE via .free alone, not .marked
-        markedIndexes = [12],
-        clickable     = false,
-        onCellClick   = null,
-        calledNumbers = null,   // if provided, clicks are ignored unless the number was called
-    } = opts;
-
-    grid.innerHTML = '';
-    for (let row = 0; row < 5; row++) {
-        for (let col = 0; col < 5; col++) {
-            const index = row * 5 + col;
-            const cell = document.createElement('div');
-            cell.className = cellClass;
-
-            if (row === 2 && col === 2) {
-                cell.textContent = freeLabel;
-                cell.classList.add('free');
-                if (markFreeCell) cell.classList.add('marked');
-            } else {
-                const num = getCellNumber(card, row, col);
-                cell.textContent    = num;
-                cell.dataset.number = num;
-                cell.dataset.index  = index;
-                if (markedIndexes.includes(index)) cell.classList.add('marked');
-
-                if (clickable) {
-                    cell.addEventListener('click', function () {
-                        if (calledNumbers && !calledNumbers.includes(parseInt(this.dataset.number, 10))) return;
-                        this.classList.toggle('marked');
-                        if (typeof onCellClick === 'function') onCellClick(index, this.classList.contains('marked'));
-                    });
-                }
-            }
-            grid.appendChild(cell);
-        }
-    }
-}
-
 /* ── Bottom sheet drag ── */
 export function attachBsheetDrag(overlay) {
     const box    = overlay.querySelector('.bsheet-box');
@@ -214,6 +151,19 @@ export function closeDepositModal() {
     setTimeout(() => modal.remove(), 320);
 }
 
+/* ── Withdraw modal close ──
+   NOTE: previously there was no exported close handler for the withdraw
+   modal at all — only submitWithdraw() closed it, and only on a
+   successful withdrawal. Any close/back/X button wired to
+   `onclick="closeWithdrawModal()"` in the HTML had nothing to call,
+   which is why the withdraw sheet never dismissed on its own. */
+export function closeWithdrawModal() {
+    const modal = document.getElementById('withdrawModal');
+    if (!modal) return;
+    modal.classList.remove('open');
+    setTimeout(() => modal.remove(), 320);
+}
+
 export function submitDeposit() {
     const txnId = (document.getElementById('depositTxnIdNew') || {}).value || '';
     const sms   = (document.getElementById('depositSmsNew')   || {}).value || '';
@@ -252,16 +202,7 @@ export function submitDeposit() {
     });
 }
 
-/* ── Withdraw ──
-   NOTE: closeDepositModal() (above) had no counterpart for the withdraw
-   sheet — that's why its close/X button did nothing. Added to match. */
-export function closeWithdrawModal() {
-    const modal = document.getElementById('withdrawModal');
-    if (!modal) return;
-    modal.classList.remove('open');
-    setTimeout(() => modal.remove(), 320);
-}
-
+/* ── Withdraw ── */
 export function submitWithdraw() {
     const btn       = document.getElementById('wmConfirmBtn');
     const resultMsg = document.getElementById('wmResultMsg');
@@ -353,10 +294,6 @@ export function openLeaderboardModal() {
 export function closeLeaderboardModal() {
     const modal = document.getElementById('leaderboardModal');
     if (modal) modal.style.display = 'none';
-    // Bug: this never stopped the countdown interval started by openLeaderboardModal,
-    // so it kept ticking in the background after close (and could re-trigger DOM
-    // writes on a hidden modal). Clear it here.
-    if (lbCountdownInterval) { clearInterval(lbCountdownInterval); lbCountdownInterval = null; }
 }
 
 let lbCountdownInterval = null;
@@ -408,31 +345,89 @@ export function initTheme() {
     } catch(e) {}
 }
 
-/* ── Generic sheet/modal close delegation ──
-   Safety net: any close/X/backdrop element marked with
-   data-close-modal="<overlayId>" (or sitting inside an overlay and
-   marked plain data-close-modal) will close that overlay, whether it
-   uses a `.open` class or inline display toggling. This means a close
-   button works the moment the attribute is added to it in the HTML,
-   even if no dedicated JS handler was wired up for that particular
-   sheet — which is what was silently breaking Deposit/Withdraw/
-   Leaderboard after the file split (some had handlers, some didn't,
-   and it wasn't obvious from the JS alone). Call once on startup. */
-export function initGlobalSheetCloseHandlers() {
-    document.addEventListener('click', (e) => {
-        const trigger = e.target.closest('[data-close-modal]');
-        if (!trigger) return;
-        const targetId = trigger.getAttribute('data-close-modal');
-        const overlay = targetId
-            ? document.getElementById(targetId)
-            : trigger.closest('.modal-overlay, .bsheet-overlay, .sheet-overlay, [data-modal]');
-        if (!overlay) return;
-        if (overlay.classList.contains('open')) {
-            overlay.classList.remove('open');
-        } else {
-            overlay.style.display = 'none';
+/* ═══════════════════════════════════════════════
+   BINGO CARD MATRIX (B-I-N-G-O 5x5 grid)
+   ═══════════════════════════════════════════════
+   This was the missing piece behind the "card selected but 5x5 grid
+   never shows" bug. app.js had a `getCellNumber()` reader plus three
+   near-duplicate grid-building loops (inline preview, chooser-top
+   preview, and the in-game card), and every one of them grabbed its
+   target element with `document.getElementById(...)` and *immediately*
+   wrote to `.innerHTML` with no null-check. If that element id doesn't
+   exist yet at the moment a card is clicked (a common side-effect of
+   splitting markup/scripts into modules — screens/templates can end up
+   attached to the DOM later than the script that reaches for them),
+   `grid.innerHTML = ''` throws a plain, uncaught
+   "Cannot set properties of null" error and the function bails out
+   silently. The 1-90 selector grid still highlights fine because that
+   click handler lives in different code — so from the outside it looks
+   exactly like "selection works, the 5x5 card just never appears".
+   Centralizing the logic here with real guards fixes that failure mode
+   and gives every caller one consistent, tested renderer. */
+
+export function getCellNumber(card, row, col) {
+    if (!card) return null;
+    if (row === 2 && col === 2) return null;
+    if (col === 0) return card.b[row];
+    if (col === 1) return card.i[row];
+    if (col === 2) return row < 2 ? card.n[row] : card.n[row - 1];
+    if (col === 3) return card.g[row];
+    return card.o[row];
+}
+
+/**
+ * Populates a 5x5 Bingo card grid under the B-I-N-G-O headers.
+ * @param {string} gridElId  id of the container element
+ * @param {object} card      card data shape { b:[], i:[], n:[], g:[], o:[] }
+ * @param {object} opts
+ *   cellClass    - CSS class for each cell (default 'card-cell')
+ *   freeText     - text for the center free cell (default 'FREE')
+ *   markedCells  - array of already-marked cell indices
+ *   onCellClick  - function(cellEl, index, number) called on cell click;
+ *                  if omitted, cells are rendered read-only (no listener)
+ */
+export function renderBingoCardGrid(gridElId, card, opts = {}) {
+    const grid = document.getElementById(gridElId);
+    if (!grid) {
+        console.warn(`[ui-controller] renderBingoCardGrid: no element #${gridElId} in the DOM — card grid was not rendered.`);
+        return false;
+    }
+    if (!card) {
+        console.warn('[ui-controller] renderBingoCardGrid: no card data supplied.');
+        return false;
+    }
+
+    const {
+        cellClass   = 'card-cell',
+        freeText    = 'FREE',
+        markedCells = [],
+        onCellClick = null,
+    } = opts;
+
+    grid.innerHTML = '';
+    for (let row = 0; row < 5; row++) {
+        for (let col = 0; col < 5; col++) {
+            const index = row * 5 + col;
+            const cell  = document.createElement('div');
+            cell.className = cellClass;
+
+            if (row === 2 && col === 2) {
+                cell.textContent = freeText;
+                cell.classList.add('free', 'marked');
+            } else {
+                const num = getCellNumber(card, row, col);
+                cell.textContent    = num;
+                cell.dataset.number = num;
+                cell.dataset.index  = index;
+                if (markedCells.includes(index)) cell.classList.add('marked');
+                if (typeof onCellClick === 'function') {
+                    cell.addEventListener('click', () => onCellClick(cell, index, num));
+                }
+            }
+            grid.appendChild(cell);
         }
-    });
+    }
+    return true;
 }
 
 /* ── Copy helpers ── */
