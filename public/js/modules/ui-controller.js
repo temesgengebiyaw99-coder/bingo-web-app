@@ -151,19 +151,6 @@ export function closeDepositModal() {
     setTimeout(() => modal.remove(), 320);
 }
 
-/* ── Withdraw modal close ──
-   NOTE: previously there was no exported close handler for the withdraw
-   modal at all — only submitWithdraw() closed it, and only on a
-   successful withdrawal. Any close/back/X button wired to
-   `onclick="closeWithdrawModal()"` in the HTML had nothing to call,
-   which is why the withdraw sheet never dismissed on its own. */
-export function closeWithdrawModal() {
-    const modal = document.getElementById('withdrawModal');
-    if (!modal) return;
-    modal.classList.remove('open');
-    setTimeout(() => modal.remove(), 320);
-}
-
 export function submitDeposit() {
     const txnId = (document.getElementById('depositTxnIdNew') || {}).value || '';
     const sms   = (document.getElementById('depositSmsNew')   || {}).value || '';
@@ -243,7 +230,10 @@ export function submitWithdraw() {
         if (typeof window.setWallet === 'function') window.setWallet(newBal);
         if (resultMsg) { resultMsg.className = 'success'; resultMsg.textContent = '💸 ' + amount + ' ETB is on the way!'; resultMsg.style.display = 'block'; }
         if (btn) btn.textContent = 'Done ✓';
-        setTimeout(closeWithdrawModal, 2500);
+        setTimeout(() => {
+            const m = document.getElementById('withdrawModal');
+            if (m) { m.classList.remove('open'); setTimeout(() => m.remove(), 320); }
+        }, 2500);
     })
     .catch(() => {
         if (resultMsg) { resultMsg.className = 'error'; resultMsg.textContent = '❌ Network error, try again'; resultMsg.style.display = 'block'; }
@@ -268,6 +258,7 @@ export function claimGift5(type) {
     const tg = window.getTelegramUser ? window.getTelegramUser() : null;
     if (window.etbClaimed5 && window.xpClaimed5) {
         window.giftEndTime5 = Date.now() + (4 * 60 * 60 * 1000);
+        if (typeof window.resetDashGiftTimer === 'function') window.resetDashGiftTimer(4);
         const giftBtn = document.getElementById('btnGift5');
         if (giftBtn) giftBtn.classList.remove('ready');
         if (tg && tg.telegram_id) {
@@ -343,91 +334,6 @@ export function initTheme() {
             if (b) b.textContent = '☀️';
         }
     } catch(e) {}
-}
-
-/* ═══════════════════════════════════════════════
-   BINGO CARD MATRIX (B-I-N-G-O 5x5 grid)
-   ═══════════════════════════════════════════════
-   This was the missing piece behind the "card selected but 5x5 grid
-   never shows" bug. app.js had a `getCellNumber()` reader plus three
-   near-duplicate grid-building loops (inline preview, chooser-top
-   preview, and the in-game card), and every one of them grabbed its
-   target element with `document.getElementById(...)` and *immediately*
-   wrote to `.innerHTML` with no null-check. If that element id doesn't
-   exist yet at the moment a card is clicked (a common side-effect of
-   splitting markup/scripts into modules — screens/templates can end up
-   attached to the DOM later than the script that reaches for them),
-   `grid.innerHTML = ''` throws a plain, uncaught
-   "Cannot set properties of null" error and the function bails out
-   silently. The 1-90 selector grid still highlights fine because that
-   click handler lives in different code — so from the outside it looks
-   exactly like "selection works, the 5x5 card just never appears".
-   Centralizing the logic here with real guards fixes that failure mode
-   and gives every caller one consistent, tested renderer. */
-
-export function getCellNumber(card, row, col) {
-    if (!card) return null;
-    if (row === 2 && col === 2) return null;
-    if (col === 0) return card.b[row];
-    if (col === 1) return card.i[row];
-    if (col === 2) return row < 2 ? card.n[row] : card.n[row - 1];
-    if (col === 3) return card.g[row];
-    return card.o[row];
-}
-
-/**
- * Populates a 5x5 Bingo card grid under the B-I-N-G-O headers.
- * @param {string} gridElId  id of the container element
- * @param {object} card      card data shape { b:[], i:[], n:[], g:[], o:[] }
- * @param {object} opts
- *   cellClass    - CSS class for each cell (default 'card-cell')
- *   freeText     - text for the center free cell (default 'FREE')
- *   markedCells  - array of already-marked cell indices
- *   onCellClick  - function(cellEl, index, number) called on cell click;
- *                  if omitted, cells are rendered read-only (no listener)
- */
-export function renderBingoCardGrid(gridElId, card, opts = {}) {
-    const grid = document.getElementById(gridElId);
-    if (!grid) {
-        console.warn(`[ui-controller] renderBingoCardGrid: no element #${gridElId} in the DOM — card grid was not rendered.`);
-        return false;
-    }
-    if (!card) {
-        console.warn('[ui-controller] renderBingoCardGrid: no card data supplied.');
-        return false;
-    }
-
-    const {
-        cellClass   = 'card-cell',
-        freeText    = 'FREE',
-        markedCells = [],
-        onCellClick = null,
-    } = opts;
-
-    grid.innerHTML = '';
-    for (let row = 0; row < 5; row++) {
-        for (let col = 0; col < 5; col++) {
-            const index = row * 5 + col;
-            const cell  = document.createElement('div');
-            cell.className = cellClass;
-
-            if (row === 2 && col === 2) {
-                cell.textContent = freeText;
-                cell.classList.add('free', 'marked');
-            } else {
-                const num = getCellNumber(card, row, col);
-                cell.textContent    = num;
-                cell.dataset.number = num;
-                cell.dataset.index  = index;
-                if (markedCells.includes(index)) cell.classList.add('marked');
-                if (typeof onCellClick === 'function') {
-                    cell.addEventListener('click', () => onCellClick(cell, index, num));
-                }
-            }
-            grid.appendChild(cell);
-        }
-    }
-    return true;
 }
 
 /* ── Copy helpers ── */
