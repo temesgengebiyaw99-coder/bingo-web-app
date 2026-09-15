@@ -15,10 +15,10 @@ import {
     closePendingDrawer,
     loadPendingRewards,
     attachBsheetDrag,
-    closeDepositModal,
     submitDeposit,
-    closeWithdrawModal,
     submitWithdraw,
+    closeDepositModal,
+    closeWithdrawModal,
     closeGift5,
     claimGift5,
     closeIsland5,
@@ -31,8 +31,7 @@ import {
     dmSwitchTab,
     flashDone,
     getCellNumber,
-    renderBingoCard,
-    initGlobalSheetCloseHandlers,
+    renderBingoCardGrid,
 } from './modules/ui-controller.js';
 
 /* ── Globals ── */
@@ -61,8 +60,8 @@ let autoScrollTimer = null;
 
 let countdownMax     = 30;
 let countdownCurrent = 30;
-let countdownTickerInterval = null;
 let frozenPlayerCount = null;
+let localCountdownTimer = null;
 
 let myCard2Index   = null;
 let playerCard2Data = null;
@@ -119,9 +118,8 @@ function getLetterForNumber(n) {
     return 'O';
 }
 
-// getCellNumber now lives in ui-controller.js (imported above) so every
-// card-rendering call site — player card, card 2, previews, winner card —
-// shares one implementation instead of several hand-rolled copies.
+/* getCellNumber now lives in ui-controller.js and is imported above,
+   so every card-grid renderer in this file reads cells the same way. */
 
 /* ── Expose API for other modules ── */
 window.getTelegramUser = getTelegramUser;
@@ -215,17 +213,10 @@ function connectToServer() {
         updateCountdownBar(countdown, countdown);
         renderCardsGrid();
         refreshLobbyStats();
-
-        if (phase === 'countdown' || phase === 'waiting') {
-            startCountdownTicker();
-        } else {
-            stopCountdownTicker();
-        }
+        syncCountdownTimerToPhase();
     });
 
     socket.on('countdown_tick', ({ countdown }) => {
-        // Authoritative resync from the server; the local ticker keeps
-        // ticking every second in between these messages.
         countdownCurrent = countdown;
         document.getElementById('headerCountdown').textContent = countdown;
         updateCountdownBar(countdown, countdownMax);
@@ -269,7 +260,7 @@ function connectToServer() {
 
     socket.on('game_start', ({ playerCount, pot, derash }) => {
         gamePhase = 'playing';
-        stopCountdownTicker();
+        syncCountdownTimerToPhase();
         frozenPlayerCount = playerCount;
         document.getElementById('gamePlayers').textContent  = playerCount;
         document.getElementById('playersCount').textContent = playerCount;
@@ -312,6 +303,7 @@ function connectToServer() {
     socket.on('bingo_winner', ({ winner, calledNumbers: cn }) => {
         calledNumbers = cn;
         gamePhase = 'finished';
+        syncCountdownTimerToPhase();
         showWinnerScreen(winner);
     });
 
@@ -339,6 +331,7 @@ function connectToServer() {
 
     socket.on('no_winner', () => {
         gamePhase = 'finished';
+        syncCountdownTimerToPhase();
         showToast('🎲 No winner this round!', '#4169E1');
         document.getElementById('gameStatus').textContent = '🎲 No Winner!';
         setTimeout(() => {
@@ -479,10 +472,8 @@ function applyGameState(state) {
         document.getElementById('gameScreen').classList.add('active');
         setWatchMode(true);
         generate75NumbersGrid();
-        stopCountdownTicker();
-    } else if (state.phase === 'countdown' || state.phase === 'waiting') {
-        startCountdownTicker();
     }
+    syncCountdownTimerToPhase();
 }
 
 function renderUI() {
@@ -490,18 +481,22 @@ function renderUI() {
     renderCardsGrid();
 }
 
-/* Bug: the TIME display used to update only when a 'countdown_tick'
-   socket event arrived. If those events were ever delayed, dropped,
-   or spaced more than a second apart, the number on screen just sat
-   there. This local ticker decrements every second on its own so the
-   display always counts down smoothly; server 'countdown_tick'
-   messages still arrive and resync countdownCurrent to the
-   authoritative value, they just no longer are the only thing moving
-   the number. */
-function startCountdownTicker() {
-    stopCountdownTicker();
-    countdownTickerInterval = setInterval(() => {
-        if (countdownCurrent > 0) countdownCurrent--;
+/* ── Local countdown ticker ──
+   Previously the header countdown only updated inside the
+   `countdown_tick` socket handler — i.e. it was 100% dependent on the
+   server pushing a tick every single second over the websocket. Any
+   gap, delay, or missed emit on the server side (or just normal network
+   jitter) left the number frozen on screen with nothing on the client
+   ticking it down in between. This runs its own 1-second interval that
+   decrements the displayed value locally, and every authoritative
+   `countdown_tick` / `phase_change` / game-state event still overwrites
+   `countdownCurrent` with the server's real value, so the two can never
+   drift apart — the timer just never goes visibly static again. */
+function startLocalCountdown() {
+    stopLocalCountdown();
+    localCountdownTimer = setInterval(() => {
+        if (gamePhase !== 'countdown') { stopLocalCountdown(); return; }
+        countdownCurrent = Math.max(0, countdownCurrent - 1);
         const cd = document.getElementById('headerCountdown');
         if (cd) cd.textContent = countdownCurrent;
         updateCountdownBar(countdownCurrent, countdownMax);
@@ -509,11 +504,16 @@ function startCountdownTicker() {
     }, 1000);
 }
 
-function stopCountdownTicker() {
-    if (countdownTickerInterval) {
-        clearInterval(countdownTickerInterval);
-        countdownTickerInterval = null;
+function stopLocalCountdown() {
+    if (localCountdownTimer) {
+        clearInterval(localCountdownTimer);
+        localCountdownTimer = null;
     }
+}
+
+function syncCountdownTimerToPhase() {
+    if (gamePhase === 'countdown') startLocalCountdown();
+    else stopLocalCountdown();
 }
 
 function updateCountdownBar(current, max) {
@@ -659,25 +659,24 @@ function selectCard(index) {
 
 function showInlinePreview(index) {
     const card = allCards[index];
-    if (!card) return;
-    renderBingoCard('inlinePreviewGrid', card, {
-        cellClass: 'inline-preview-cell',
-        markFreeCell: false,
-    });
+    if (!card) {
+        console.warn(`[app] showInlinePreview: no card data for index ${index} (allCards length: ${allCards.length}).`);
+        return;
+    }
+    renderBingoCardGrid('inlinePreviewGrid', card, { cellClass: 'inline-preview-cell' });
 }
 
 function showChooserTopPreview(index) {
     const card = allCards[index];
-    if (!card) return;
+    if (!card) {
+        console.warn(`[app] showChooserTopPreview: no card data for index ${index} (allCards length: ${allCards.length}).`);
+        return;
+    }
     const bar   = document.getElementById('chooserTopPreview');
     const label = document.getElementById('ctpCardLabel');
     const sub   = document.getElementById('ctpCardSub');
 
-    renderBingoCard('ctpMiniGrid', card, {
-        cellClass: 'ctp-mini-cell',
-        freeLabel: '★',
-        markFreeCell: false,
-    });
+    renderBingoCardGrid('ctpMiniGrid', card, { cellClass: 'ctp-mini-cell', freeText: '★' });
 
     label.textContent = `Card #${index + 1}`;
     sub.textContent   = '✓ Selected — can switch';
@@ -747,14 +746,20 @@ function generate75NumbersGrid() {
 }
 
 function generatePlayerCard() {
+    const card = playerCardData;
+    if (!card) {
+        console.warn('[app] generatePlayerCard: playerCardData is not set — nothing to render.');
+        return;
+    }
     markedCells = [12];
-    renderBingoCard('bingoCard', playerCardData, {
+
+    renderBingoCardGrid('bingoCard', card, {
         cellClass: 'card-cell',
-        clickable: true,
-        markedIndexes: markedCells,
-        onCellClick: (idx, isMarked) => {
-            if (isMarked) {
-                if (!markedCells.includes(idx)) markedCells.push(idx);
+        markedCells,
+        onCellClick: (cell, idx) => {
+            cell.classList.toggle('marked');
+            if (cell.classList.contains('marked')) {
+                markedCells.push(idx);
             } else {
                 markedCells = markedCells.filter(i => i !== idx);
             }
@@ -866,14 +871,13 @@ function selectCard2(idx) {
 
 function renderCard2() {
     if (!playerCard2Data || myCard2Index === null) return;
-    if (!document.getElementById('bingoCard2')) return;
-    renderBingoCard('bingoCard2', playerCard2Data, {
+    renderBingoCardGrid('bingoCard2', playerCard2Data, {
         cellClass: 'card-cell',
-        clickable: true,
-        markedIndexes: markedCells2,
-        calledNumbers: calledNumbers,
-        onCellClick: (idx, isMarked) => {
-            if (isMarked) {
+        markedCells: markedCells2,
+        onCellClick: (cell, idx, num) => {
+            if (!calledNumbers.includes(num)) return;
+            cell.classList.toggle('marked');
+            if (cell.classList.contains('marked')) {
                 if (!markedCells2.includes(idx)) markedCells2.push(idx);
             } else {
                 markedCells2 = markedCells2.filter(x => x !== idx);
@@ -1022,11 +1026,9 @@ function goToSlide(index) {
    ═══════════════════════════════════════════════ */
 function resetLocalState(state) {
     gamePhase        = state.phase;
-    // Bug: countdownCurrent/countdownMax were never resynced here, so after a
-    // round reset the ticker kept counting from whatever stale value was left
-    // over from the previous round instead of the fresh one the server sent.
     countdownCurrent = state.countdown;
     countdownMax     = 30;
+    syncCountdownTimerToPhase();
     takenCards       = state.takenCards || {};
     calledNumbers    = [];
     currentNumber    = null;
@@ -1073,12 +1075,6 @@ function resetLocalState(state) {
     updateCountdownBar(state.countdown, 30);
     updatePhaseBadge();
     renderCardsGrid();
-
-    if (state.phase === 'countdown' || state.phase === 'waiting') {
-        startCountdownTicker();
-    } else {
-        stopCountdownTicker();
-    }
 }
 
 function returnToLobby() {
@@ -1826,7 +1822,6 @@ function closeWelcomeModal() {
    ═══════════════════════════════════════════════ */
 window.addEventListener('load', () => {
     initTheme();
-    initGlobalSheetCloseHandlers();
     setupSwipeDetection();
 
     if (typeof io !== 'undefined') {
@@ -1866,7 +1861,17 @@ window.addEventListener('load', () => {
         document.getElementById('headerCountdown').textContent = 30;
         updateCountdownBar(30, 30);
         updatePhaseBadge();
-        startCountdownTicker();
+
+        setInterval(() => {
+            countdownCurrent--;
+            if (countdownCurrent < 0) {
+                countdownCurrent = 30;
+                countdownMax = 30;
+            }
+            const cd = document.getElementById('headerCountdown');
+            if (cd) cd.textContent = countdownCurrent;
+            updateCountdownBar(countdownCurrent, countdownMax);
+        }, 1000);
     }
 });
 
